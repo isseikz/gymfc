@@ -7,6 +7,8 @@ from mpi4py import MPI
 import math
 import os
 
+import math_function as mf
+
 """
 This script evaluates a PID controller in the GymFC environment. This can be
 used as a baseline for comparing to other control algorihtms in GymFC and also
@@ -14,8 +16,8 @@ to confirm the GymFC environment is setup and installed correctly.
 
 The PID and mix settings reflect what was used in the following paper,
 
-Koch, William, Renato Mancuso, Richard West, and Azer Bestavros. 
-"Reinforcement Learning for UAV Attitude Control." arXiv 
+Koch, William, Renato Mancuso, Richard West, and Azer Bestavros.
+"Reinforcement Learning for UAV Attitude Control." arXiv
 preprint arXiv:1804.04154 (2018).
 
 For reference, PID
@@ -26,18 +28,18 @@ PID YAW = [4, 50, 0.0]
 
 and mix for values throttle, roll, pitch, yaw,
 
-rear right motor = [ 1.0, -1.0,  0.598, -1.0 ]  
+rear right motor = [ 1.0, -1.0,  0.598, -1.0 ]
 front rear motor = [ 1.0, -0.927, -0.598,  1.0 ]
 rear left motor  = [ 1.0,  1.0,  0.598,  1.0 ]
 front left motor = [ 1.0,  0.927, -0.598, -1.0 ]
 
 PID terms were found first using the Ziegler–Nichols method and then manually tuned
-for increased response. The Iris quadcopter does not have an X frame therefore 
+for increased response. The Iris quadcopter does not have an X frame therefore
 a custom mixer is required. Using the mesh files found in the Gazebo models they were
 imported into a CAD program and the motor constraints were measured. Using these
 values the mix calculater found here, https://www.iforce2d.net/mixercalc, was
 used to derive the values. The implmementation of the PID controller can be found here,
-https://github.com/ivmech/ivPID/blob/master/PID.py, windup has been removed so 
+https://github.com/ivmech/ivPID/blob/master/PID.py, windup has been removed so
 another variable was not introduced.
 """
 
@@ -87,7 +89,7 @@ def plot_step_response(desired, actual,
     ax[0].plot(t, desired[:,0], reflinestyle)
     ax[0].plot(t, desired[:,0] -  threshold[:,0] , error_linestyle, alpha=0.5)
     ax[0].plot(t, desired[:,0] +  threshold[:,0] , error_linestyle, alpha=0.5)
- 
+
     r = actual[:,0]
     ax[0].plot(t[:len(r)], r, linewidth=res_linewidth)
 
@@ -123,38 +125,73 @@ class Policy(object):
     def reset(self):
         pass
 
-class PIDPolicy(Policy):
+class RandomPolicy(Policy):
     def __init__(self):
-        self.r = [2, 10, 0.005]
-        self.p = [10, 10, 0.005]
-        self.y = [4, 50, 0.0]
-        self.controller = PIDController(pid_roll = self.r, pid_pitch = self.p, pid_yaw =self.y )
+        self.cnt = 0
+        self.motor_values = np.array([1500]*4)
+        self.is_safe = True
 
-    def action(self, state, sim_time=0, desired=np.zeros(3), actual=np.zeros(3) ):
-        # Convert to degrees
-        desired = list(map(math.degrees, desired))
-        actual = list(map(math.degrees, actual))
-        motor_values = np.array(self.controller.calculate_motor_values(sim_time, desired, actual))
+    def action(self, state, sim_time=0, euler=np.zeros(3), position=np.zeros(3)):
+        # print(self.is_safe, any([(np.cos(angle)< 1/np.sqrt(2)) for angle in euler]))
+        if self.is_safe & any([(np.cos(angle)< 1/np.sqrt(2)) for angle in euler]):
+            self.is_safe = False
+        elif self.is_safe & (position[2] > 0.5):
+            self.is_safe = False
+        elif (position[2] < 0.05):
+            self.is_safe = True
+            self.cnt = 0
+        else:
+            pass
+
+
+        # motor_values = np.array([1500]*4)
+        if (self.is_safe) & (self.cnt % 1000 == 0):
+            self.motor_values = np.random.rand(4)*500+1500 #
+            # print(self.motor_values)
+        elif not self.is_safe:
+            self.motor_value = np.zeros(4)
+        self.cnt += 1
+            # motor_values = np.array(self.controller.calculate_motor_values(sim_time, desired, actual))
         # Need to scale from 1000-2000 to -1:1
-        return np.array( [ (m - 1000)/500  - 1 for m in motor_values])
+        return np.array( [ (m - 1000)/500  - 1 for m in self.motor_values])
 
     def reset(self):
-        self.controller = PIDController(pid_roll = self.r, pid_pitch = self.p, pid_yaw = self.y )
+        pass
+
+def sensor(env):
+    acc = env.linear_acceleration_xyz
+    ang = env.omega_actual
+    return acc, ang
+
+def get_euler(env):
+    quat1234 = env.orientation_quat
+    quat0123 = np.array([quat1234[3],quat1234[0],quat1234[1],quat1234[2]])
+    return mf.euler_from(quat0123)
+
+def get_position(env):
+    return env.position
 
 def eval(env, pi):
     actuals = []
     desireds = []
     pi.reset()
     ob = env.reset()
+    env.render()
     while True:
-        desired = env.omega_target
-        actual = env.omega_actual
+        # desired = env.omega_target
+        # actual = env.omega_actual
         # PID only needs to calculate error between desired and actual y_e
-        ac = pi.action(ob, env.sim_time, desired, actual)
+
+        acc, ang = sensor(env)
+        euler = get_euler(env)
+        pos = get_position(env)
+        desired = env.omega_target
+        actual = np.hstack((acc, ang))
+        ac = pi.action(ob, env.sim_time, euler, pos)
         ob, reward, done, info = env.step(ac)
         actuals.append(actual)
         desireds.append(desired)
-        if done:
+        if env.sim_time > 20.0:
             break
     env.close()
     return desireds, actuals
@@ -197,10 +234,10 @@ class PIDController(object):
         self.Kd = [self.DTERM_SCALE * d for d in self.Kd]
 
 
-        self.itermLimit = itermLimit 
+        self.itermLimit = itermLimit
 
         self.previousRateError = [0]*3
-        self.previousTime = 0 
+        self.previousTime = 0
         self.previous_motor_values = [self.minthrottle]*4
         self.pid_rpy = [PID(*pid_roll), PID(*pid_pitch), PID(*pid_yaw)]
 
@@ -226,10 +263,10 @@ class PIDController(object):
         pidSumLimit = 10000.#500
         pidSumLimitYaw = 100000.#1000.0#400
         motorOutputMixSign = 1
-        motorOutputRange = self.maxthrottle - self.minthrottle# throttle max - throttle min 
+        motorOutputRange = self.maxthrottle - self.minthrottle# throttle max - throttle min
         motorOutputMin = self.minthrottle
 
-        currentMixer=[ 
+        currentMixer=[
             [ 1.0, -1.0,  0.598, -1.0 ],          # REAR_R
             [ 1.0, -0.927, -0.598,  1.0 ],          # RONT_R
             [ 1.0,  1.0,  0.598,  1.0 ],          # REAR_L
@@ -237,7 +274,7 @@ class PIDController(object):
         ]
         mixer_index_throttle = 0
         mixer_index_roll = 1
-        mixer_index_pitch = 2 
+        mixer_index_pitch = 2
         mixer_index_yaw = 3
 
         scaledAxisPidRoll = self.constrainf(r, -pidSumLimit, pidSumLimit) / PID_MIXER_SCALING
@@ -270,7 +307,7 @@ class PIDController(object):
         #print("range=", motorMixRange)
 
         if motorMixRange > 1.0:
-            for i in range(motor_count): 
+            for i in range(motor_count):
                 motorMix[i] /= motorMixRange
             # Get the maximum correction by setting offset to center when airmode enabled
             throttle = 0.5
@@ -427,10 +464,11 @@ class PID:
 
 def main(env_id, seed):
     env = gym.make(env_id)
+    env.render()
     rank = MPI.COMM_WORLD.Get_rank()
     workerseed = seed + 1000000 * rank
     env.seed(workerseed)
-    pi = PIDPolicy()
+    pi = RandomPolicy()
     desireds, actuals = eval(env, pi)
     title = "PID Step Response in Environment {}".format(env_id)
     plot_step_response(np.array(desireds), np.array(actuals), title=title)
