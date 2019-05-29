@@ -1,6 +1,6 @@
 <?xml version='1.0'?>
 <sdf version="1.6">
- <model name="quadcopter_attitude_control">
+ <model name="quadcopter_control">
 
 	<enable_wind>true</enable_wind>
 	<!-- Place the aircraft 1m above the ground

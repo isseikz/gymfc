@@ -11,7 +11,7 @@ class CustomBuild(DistutilsBuild):
         output = subprocess.getoutput("cmake --version")
         words = output.split()
         if (len(words) > 2 and
-                words[0] == "cmake" and 
+                words[0] == "cmake" and
                 words[1] == "version"):
 
             version_str = words[2]
@@ -27,7 +27,7 @@ class CustomBuild(DistutilsBuild):
         plugin_dir = os.path.join(os.path.dirname(__file__), "gymfc/envs/assets/gazebo/plugins")
         print ("Plugin dir", plugin_dir)
         build_plugin_script = "./build_plugin.sh"
-        p = subprocess.call([build_plugin_script], cwd=plugin_dir, shell=True) 
+        p = subprocess.call([build_plugin_script], cwd=plugin_dir, shell=True)
         print ("Done building plugin")
 
     def run(self):
@@ -47,8 +47,8 @@ setup(name='gymfc',
       license='MIT',
       packages=find_packages(),
       package_data={'gymfc': [
-          "envs/assets/gazebo/models/quadcopter_attitude_control/*.config",
-          "envs/assets/gazebo/models/quadcopter_attitude_control/*.sdf",
+          "envs/assets/gazebo/models/quadcopter_control/*.config",
+          "envs/assets/gazebo/models/quadcopter_control/*.sdf",
           "envs/assets/gazebo/worlds/*.world",
           "envs/assets/gazebo/plugins/build/*.so"
       ]},
