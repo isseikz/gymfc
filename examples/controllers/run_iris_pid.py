@@ -8,6 +8,7 @@ import math
 import os
 
 import math_function as mf
+from time import sleep
 
 """
 This script evaluates a PID controller in the GymFC environment. This can be
@@ -33,7 +34,7 @@ front rear motor = [ 1.0, -0.927, -0.598,  1.0 ]
 rear left motor  = [ 1.0,  1.0,  0.598,  1.0 ]
 front left motor = [ 1.0,  0.927, -0.598, -1.0 ]
 
-PID terms were found first using the Ziegler–Nichols method and then manually tuned
+PID terms were found first using the Zieglerâ€“Nichols method and then manually tuned
 for increased response. The Iris quadcopter does not have an X frame therefore
 a custom mixer is required. Using the mesh files found in the Gazebo models they were
 imported into a CAD program and the motor constraints were measured. Using these
@@ -129,27 +130,45 @@ class RandomPolicy(Policy):
     def __init__(self):
         self.cnt = 0
         self.motor_values = np.array([1500]*4)
+        self.test_values = np.array([1500]*4)
         self.is_safe = True
+        self.update = False
+        self.final_reward = 0
 
-    def action(self, state, sim_time=0, euler=np.zeros(3), position=np.zeros(3)):
-        # print(self.is_safe, any([(np.cos(angle)< 1/np.sqrt(2)) for angle in euler]))
-        if self.is_safe & any([(np.cos(angle)< 1/np.sqrt(2)) for angle in euler]):
+    def action(self, state, sim_time=0, actual=np.zeros(6), euler=np.zeros(3), position=np.zeros(3)):
+        print(self.is_safe, euler, any([(np.cos(angle)> 1/np.sqrt(2)) for angle in euler]))
+
+        safe_angle = any([np.cos(angle)> 0.98 for angle in euler[0:2]]) # 20 deg
+        safe_angvel = np.linalg.norm(actual[3:6]) < 5 # 50 rad/s
+        safe_altitude = (position[2] > -0.3)
+        safe_landing  = (position[2] > -0.3) & any([np.cos(angle) > 0.985 for angle in euler[0:2]]) # 10deg
+        # print(position)
+
+        # TODO: 加速度が明らかにおかしいときはアラート（飛ばない）
+        # TODO: 徐々に最大入力を大きくしないと瞬間的なトルクでひっくり返る
+        # TODO: 徐々に大きくしながら上に上がり続けられれば報酬を与える？
+        # TODO: そして、飛ぶ状態で少しずらした入力でシステム推定
+        # motor_values = np.array([1500]*4)
+        if (self.is_safe) & (self.cnt % 100 == 0): # update
+            print("You Win! Congratulations!")
+            self.test_values = np.random.rand(4) * 1000 * sim_time / 20 + 1000
             self.is_safe = False
-        elif self.is_safe & (position[2] > 0.5):
-            self.is_safe = False
-        elif (position[2] < 0.05):
+            self.final_reward = 1
+        elif (not self.is_safe) & (safe_angle & safe_landing): # reset
+            print("You Lose! Think why you did so!")
             self.is_safe = True
             self.cnt = 0
+            self.final_reward = -1
+        elif (not safe_angle)|(not safe_angvel)|(not safe_altitude):
+            self.is_safe = False
+        # print(self.motor_values)
+
+        if self.is_safe:
+            self.motor_values = self.test_values
         else:
-            pass
+            self.motor_values = np.zeros(4)
+        sleep(0.01)
 
-
-        # motor_values = np.array([1500]*4)
-        if (self.is_safe) & (self.cnt % 1000 == 0):
-            self.motor_values = np.random.rand(4)*500+1500 #
-            # print(self.motor_values)
-        elif not self.is_safe:
-            self.motor_value = np.zeros(4)
         self.cnt += 1
             # motor_values = np.array(self.controller.calculate_motor_values(sim_time, desired, actual))
         # Need to scale from 1000-2000 to -1:1
@@ -176,7 +195,6 @@ def eval(env, pi):
     desireds = []
     pi.reset()
     ob = env.reset()
-    env.render()
     while True:
         # desired = env.omega_target
         # actual = env.omega_actual
@@ -187,7 +205,7 @@ def eval(env, pi):
         pos = get_position(env)
         desired = env.omega_target
         actual = np.hstack((acc, ang))
-        ac = pi.action(ob, env.sim_time, euler, pos)
+        ac = pi.action(ob, env.sim_time, actual, euler, pos)
         ob, reward, done, info = env.step(ac)
         actuals.append(actual)
         desireds.append(desired)
