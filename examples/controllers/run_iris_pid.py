@@ -120,9 +120,55 @@ def plot_step_response(desired, actual,
 
     plt.show()
 
-class Policy(object):
-    def action(self, state, sim_time=0, desired=np.zeros(3), actual=np.zeros(3) ):
-        pass
+class SafeTakingOffPolicy(object):
+    """安全に離陸するための方策を学習するポリシー."""
+    def __init__(self):
+        self.cnt = 0
+        self.motor_values = np.array([1500]*4)
+        self.test_values = np.array([1500]*4)
+        self.is_safe = True
+        self.update = False
+        self.final_reward = 0
+
+    def action(self, state, sim_time=0, actual=np.zeros(6), euler=np.zeros(3), position=np.zeros(3)):
+        print(self.is_safe, euler, any([(np.cos(angle)> 1/np.sqrt(2)) for angle in euler]))
+
+        safe_angle = any([np.cos(angle)> 0.98 for angle in euler[0:2]]) # 20 deg
+        safe_angvel = np.linalg.norm(actual[3:6]) < 5 # 50 rad/s
+        safe_altitude = (position[2] > -0.3)
+        safe_landing  = (position[2] > -0.3) & any([np.cos(angle) > 0.985 for angle in euler[0:2]]) # 10deg
+        # print(position)
+
+        # TODO: 加速度が明らかにおかしいときはアラート（飛ばない）
+        # TODO: 徐々に最大入力を大きくしないと瞬間的なトルクでひっくり返る
+        # TODO: 徐々に大きくしながら上に上がり続けられれば報酬を与える？
+        # TODO: そして、飛ぶ状態で少しずらした入力でシステム推定
+        # motor_values = np.array([1500]*4)
+        if (self.is_safe) & (self.cnt % 100 == 0): # update
+            print("You Win! Congratulations!")
+            self.test_values = np.random.rand(4) * 1000 * sim_time / 20 + 1000
+            self.is_safe = False
+            self.final_reward = 1
+        elif (not self.is_safe) & (safe_angle & safe_landing): # reset
+            print("You Lose! Think why you did so!")
+            self.is_safe = True
+            self.cnt = 0
+            self.final_reward = -1
+        elif (not safe_angle)|(not safe_angvel)|(not safe_altitude):
+            self.is_safe = False
+        # print(self.motor_values)
+
+        if self.is_safe:
+            self.motor_values = self.test_values
+        else:
+            self.motor_values = np.zeros(4)
+        sleep(0.01)
+
+        self.cnt += 1
+            # motor_values = np.array(self.controller.calculate_motor_values(sim_time, desired, actual))
+        # Need to scale from 1000-2000 to -1:1
+        return np.array( [ (m - 1000)/500  - 1 for m in self.motor_values])
+
     def reset(self):
         pass
 
